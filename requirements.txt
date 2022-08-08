@@ -1,4 +1,5 @@
-numpy
-torch
-pygame
+numpy~=1.23.1
+torch~=1.12.0
+pygame~=2.1.2
 gym
+tqdm~=4.64.0

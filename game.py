@@ -5,7 +5,7 @@ import numpy as np
 import pygame
 from pygame.sprite import Sprite
 
-from player import Player
+from ai.player import Player
 
 
 class Point:
@@ -113,7 +113,7 @@ class Game:
                 # If the last step the player was not in the block, stop it on that axis
                 # TODO: Actually fix this 0.95 weird hack
                 horizontal_stop = not (block_x - 0.95 < player.x - player.delta_x < block_x + 1)
-                vertical_stop = not (block_y - 1 < player.y - player.delta_y < block_y + 1)
+                vertical_stop = not (block_y - 0.95 < player.y - player.delta_y < block_y + 1)
 
                 # If both horizontal and vertical stops are triggered, we hit a corner, check which side of the
                 # block we need to be pushed back to
@@ -147,19 +147,24 @@ class Game:
     def simulation_ended(self):
         return sum(player.alive for player in self.players) == 0
 
-
     def render(self):
         for block in self.tiles:
             self.screen.blit(block.image, block.rect)
         for player in self.players:
             player.render()
 
-    def add_ai(self):
-        self.players.append(Player(self, self.screen, self.size, ai=True))
+    def add_ai(self, buffer_size=5000):
+        self.players.append(Player(
+            self,
+            self.screen,
+            self.size,
+            ai=True,
+            buffer_size=buffer_size
+        ))
 
     def reset(self):
         self.game_tick = 0
-        self.reset_board()
+        # self.reset_board()
 
         for player in self.players:
             player.reset()

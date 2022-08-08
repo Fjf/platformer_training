@@ -1,4 +1,5 @@
 import random
+from collections import deque
 
 import numpy as np
 import pygame
@@ -6,7 +7,8 @@ import torch
 from pygame.sprite import Sprite
 from torch.optim import Adam
 
-from model import PlayerModel
+from ai.experience import ExperienceReplay, Experience
+from ai.model import PlayerModel
 
 
 class Player:
@@ -14,7 +16,7 @@ class Player:
     air_friction = 0.1
     gravity = 2
 
-    def __init__(self, game, screen, size, ai=False):
+    def __init__(self, game, screen, size, ai=False, buffer_size=5000):
         self.game = game
         self.x = self.game.width // 2
         self.y = self.game.height // 2
@@ -41,12 +43,18 @@ class Player:
             #################################
             # Initialize pytorch stuff
             #################################
+            self.play_ticks = 0
+            self.update_ticks = 0
+
             self.network = PlayerModel()
+            self.target_network = PlayerModel()
             self.optimizer = Adam(self.network.parameters(), lr=0.05)
 
-            self.action_history = []
-            self.reward_history = []
-            self.state_history = []
+            self.buffer_size = buffer_size
+            self.experience = ExperienceReplay(self.buffer_size)
+            self.current_action = None
+            self.current_reward = None
+            self.current_state = None
 
     def reset(self):
         self.x = self.game.width // 2
@@ -93,7 +101,7 @@ class Player:
         self.sprite.rect.y = self.y * self.render_height
 
         w, h = self.game.board.shape
-        if not (0 < self.x < w) or not (0 < self.y < h):
+        if not (1 < self.x < w - 1) or not (1 < self.y < h - 1):
             self.alive = False
 
     def render(self):
@@ -103,26 +111,59 @@ class Player:
         self.screen.blit(self.sprite.image, self.sprite.rect)
 
     def do_ai_action(self):
-        tensor = torch.Tensor(self.game.board)
-        policy = self.network(torch.unsqueeze(tensor, dim=0))
+        state = self.create_state()
+        policy = self.network(torch.unsqueeze(torch.Tensor(state), dim=0))
 
-        if random.random() < 1 - min(self.game.game_tick * 0.01, 0.95):
-            action = random.randint(0, 2)
+        epsilon = 1 - min(self.game.game_tick * 0.01, 0.95)
+        if random.random() < epsilon:
+            action = random.randint(0, 3)
         else:
-            action = torch.multinomial(policy, 1).item()
+            _, act_v = torch.max(policy, dim=1)
+            action = int(act_v.item())
 
         if action == 0:
             self.jump()
         elif action == 1:
             self.left()
-        else:
+        elif action == 2:
             self.right()
+        else:
+            ...  # noop
 
-        self.state_history.append(np.copy(self.game.board))
-        self.action_history.append(action)
+        self.current_state = np.copy(state)
+        self.current_action = action
+        self.play_ticks += 1
 
     def do_ai_reward(self):
         if self.alive:
-            self.reward_history.append(1)
+            reward = self.play_ticks / 100
         else:
-            self.reward_history.append(0)
+            reward = 0
+
+        experience = Experience(
+            state=self.current_state,
+            action=self.current_action,
+            done=not self.alive,
+            reward=reward,
+            new_state=self.create_state()
+        )
+
+        self.experience.append(experience)
+
+    def create_state(self):
+        interpolated_player = np.zeros(self.game.board.shape)
+
+        if self.alive:
+            x0 = self.x - int(self.x)
+            x1 = 1 - x0
+            y0 = self.y - int(self.y)
+            y1 = 1 - y0
+            interpolated_player[int(self.x) + 0, int(self.y) + 0] = x0 * y0
+            interpolated_player[int(self.x) + 1, int(self.y) + 0] = x1 * y0
+            interpolated_player[int(self.x) + 0, int(self.y) + 1] = x0 * y1
+            interpolated_player[int(self.x) + 1, int(self.y) + 1] = x1 * y1
+
+        return np.array([
+            self.game.board,
+            interpolated_player
+        ], dtype=float)
